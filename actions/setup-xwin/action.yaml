@@ -1,0 +1,61 @@
+name: setup-xwin
+description: Use xwin to install and cache Windows CRT/SDK headers
+
+inputs:
+  path:
+    description: Directory in which xwin will install the MS CRT and Windows SDK headers, usually relative to the workspace
+    required: true
+
+runs:
+  using: composite
+  steps:
+
+   - name: Require Linux
+      if: runner.os != 'Linux'
+      shell: bash
+      run: |
+        echo "::error::This action (setup-xwin) currently only supports Linux."
+        exit 1
+
+      # The Windows SDK manifest file was downloaded with:
+      # curl -L 'https://aka.ms/vs/17/release/channel' -o manifest_17.json
+    - uses: actions/cache/restore@v6
+      id: restore-xwin-headers
+      with:
+        path: ${{ inputs.path }}
+        key: xwin-headers-${{ runner.os }}-x86-manifest_17-${{ hashFiles(format('{0}/manifest_17.json', github.action_path)) }}
+
+    - name: Download xwin
+      if: steps.restore-xwin-headers.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        curl --silent -L \
+          --retry 4 \
+          --retry-max-time 60 \
+          --output xwin.tar.gz \
+          "https://github.com/Jake-Shadle/xwin/releases/download/0.10.0/xwin-0.10.0-x86_64-unknown-linux-musl.tar.gz"
+
+        echo "d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88  xwin.tar.gz" | sha256sum --check --status -
+
+        tar -xzf xwin.tar.gz --strip-components=1 "xwin-0.10.0-x86_64-unknown-linux-musl/xwin"
+
+    - name: Install the Windows headers
+      if: steps.restore-xwin-headers.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ github.workspace }}  # since inputs.path may be relative to workspace
+      env:
+        TARGET_PATH: ${{ inputs.path }}
+      run: |
+        mkdir -p "$TARGET_PATH"
+        "$GITHUB_ACTION_PATH/xwin" --accept-license \
+          --arch x86 \
+          --cache-dir "$RUNNER_TEMP/xwin-cache" \
+          --manifest "$GITHUB_ACTION_PATH/manifest_17.json" \
+          splat --output "$TARGET_PATH"
+
+    - uses: actions/cache/save@v6
+      if: steps.restore-xwin-headers.outputs.cache-hit != 'true'
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ steps.restore-xwin-headers.outputs.cache-primary-key }}
