@@ -1,0 +1,338 @@
+name: attested-build
+description: |-
+  This workflow builds an SC4 DLL project, packages it into a .zip artifact for
+  release, and attests the artifact with a provenance attestation.
+  The attestation certifies that a DLL was built from the published sources.
+  The attestation will include the .zip artifact itself, as well as any DLLs
+  matching the `attestation-dll-path` input.
+
+on:
+  workflow_call:
+    inputs:
+      build-script:
+        description: Command or inline script used to build the project
+        required: true
+        type: string
+      build-output:
+        description: File or directory to package into the artifact
+        required: true
+        type: string
+      artifact-name:
+        description: Artifact name used in the result and release, should end with .zip
+        required: true
+        type: string
+      attestation-dll-path:
+        description:
+          Path or glob for the DLL inside the ZIP. Matching DLLs are added as attestation subjects in addition to the ZIP.
+          Set it to an empty string to attest only the ZIP.
+          It should match only the intended DLL;
+          it MUST NOT match any third-party binaries and SHOULD NOT match any text files, images, etc.
+        required: false
+        type: string
+        default: '*.dll'
+      compiler:
+        description: Compiler selection; `Clang` or `MSVC`. Clang is installed on Linux or Windows runners; MSVC requires a Windows runner.
+        required: false
+        type: string
+        default: Clang
+      build-os:
+        description: Runner OS label for the build, such as `ubuntu-latest` or `windows-latest`.
+        required: false
+        type: string
+        default: ubuntu-latest
+      install-msbuild:
+        description: Whether to install MSBuild for the build. Intended for Windows builds.
+        type: boolean
+        default: false
+      install-cmake:
+        description: Whether to install cmake for the build
+        type: boolean
+        default: false
+      xwin-path:
+        description: Optional path for Windows SDK headers, passed to `setup-xwin` on Linux. An empty value skips xwin setup.
+        required: false
+        type: string
+        default: ""
+      build-shell:
+        description: Shell used to run build-script (bash, pwsh). Defaults to `pwsh` on Windows, and `bash` otherwise.
+        required: false
+        type: string
+      skip-sign:
+        description: Whether to skip the sign job, e.g. on pre-releases. Set this for all tags without release.
+        required: false
+        type: boolean
+        default: false
+      skip-deploy:
+        description: Whether to skip the deploy job; for example, if you want to handle deployment yourself.
+        required: false
+        type: boolean
+        default: false
+
+    outputs:
+      artifact-id:
+        description: ID of the uploaded artifact after attestation
+        value: ${{ jobs.sign.outputs.artifact-id }}
+      artifact-sha256:
+        description: SHA256 of the final artifact
+        value: ${{ jobs.sign.outputs.artifact-sha256 }}
+      attestation-url:
+        description: URL of the attestation for the artifact
+        value: ${{ jobs.sign.outputs.attestation-url }}
+
+
+jobs:
+  build:
+    runs-on: ${{ inputs.build-os }}
+    permissions:
+      contents: read
+    outputs:
+      unsigned-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      unsigned-artifact-sha256: ${{ steps.zip.outputs.sha256 }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Capture SOURCE_DATE_EPOCH
+        id: source-date
+        shell: bash
+        run: |
+          echo "source_date_epoch=$(git show -s --format=%ct)" >> "$GITHUB_OUTPUT"
+
+      - name: Install compiler
+        shell: bash
+        env:
+          COMPILER: ${{ inputs.compiler }}
+        run: |
+          if [ "$COMPILER" = "Clang" ]; then
+            if [ "${{ runner.os }}" = "Linux" ]; then
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends clang lld
+            elif [ "${{ runner.os }}" = "Windows" ]; then
+              choco install llvm -y --no-progress
+              echo "C:/Program Files/LLVM/bin" >> "$GITHUB_PATH"
+            else
+              echo "Clang is not supported on ${{ runner.os }}" >&2
+              exit 1
+            fi
+            clang-cl --version
+            lld-link --version
+          elif [ "$COMPILER" = "MSVC" ]; then
+            if [ "${{ runner.os }}" != "Windows" ]; then
+              echo "MSVC requires a Windows runner" >&2
+              exit 1
+            fi
+          else
+            echo "Unsupported compiler: ${{ inputs.compiler }}" >&2
+            exit 1
+          fi
+
+      - name: Setup MSBuild
+        if: ${{ inputs.install-msbuild }}
+        uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57  # v3
+        with:
+          msbuild-architecture: x86
+
+      - name: Setup CMake
+        if: ${{ inputs.install-cmake }}
+        uses: lukka/get-cmake@f86dd60acae0d132056913e248bdabf0e0580b7a  # v4.4.5
+        with:
+          cmakeVersion: "4.4.5"
+
+      - name: Setup xwin headers
+        if: ${{ inputs.xwin-path != '' }}
+        uses: $/actions/setup-xwin
+        with:
+          path: ${{ inputs.xwin-path }}
+
+      - name: Build (bash)
+        if: ${{ inputs.build-shell == '' && runner.os != 'Windows' || inputs.build-shell == 'bash' }}
+        id: build-bash
+        shell: bash
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.source_date_epoch }}
+        run: ${{ inputs.build-script }}
+
+      - name: Build (pwsh)
+        if: ${{ inputs.build-shell == '' && runner.os == 'Windows' || inputs.build-shell == 'pwsh' }}
+        id: build-pwsh
+        shell: pwsh
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.source_date_epoch }}
+        run: ${{ inputs.build-script }}
+
+      - name: Fail if both were skipped
+        if: ${{ steps.build-bash.conclusion == 'skipped' && steps.build-pwsh.conclusion == 'skipped' }}
+        run: |
+          echo "Unsupported build-shell" >&2
+          exit 1
+
+      - name: Assemble dist tree
+        id: dist
+        shell: bash
+        env:
+          BUILD_OUTPUT: ${{ inputs.build-output }}
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            DIST_ROOT="${RUNNER_TEMP}\\artifact-dist-${{ github.run_id }}"
+          else
+            DIST_ROOT="${RUNNER_TEMP}/artifact-dist-${{ github.run_id }}"
+          fi
+          rm -rf "$DIST_ROOT"
+          mkdir -p "$DIST_ROOT"
+          if [[ -f "$BUILD_OUTPUT" ]]; then
+            cp -pr -- "$BUILD_OUTPUT" "$DIST_ROOT"
+          elif [[ -d "$BUILD_OUTPUT" ]]; then
+            cp -pr -- "$BUILD_OUTPUT"/. "$DIST_ROOT"
+          fi
+          echo "dist_root=$DIST_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Log dist tree contents
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
+        working-directory: ${{ steps.dist.outputs.dist_root }}
+        run: tree -C .
+      - name: Log dist tree contents (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: ${{ steps.dist.outputs.dist_root }}
+        run: tree . /f
+
+      - name: Create deterministic zip
+        id: zip
+        shell: bash
+        working-directory: ${{ steps.dist.outputs.dist_root }}
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.source_date_epoch }}
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            ZIP_PATH="${RUNNER_TEMP}\\$ARTIFACT_NAME"
+          else
+            ZIP_PATH="${RUNNER_TEMP}/$ARTIFACT_NAME"
+          fi
+          rm -f "$ZIP_PATH" "${ZIP_PATH}.zip"
+
+          find . -print0 | xargs -0r touch --no-dereference --date="@${SOURCE_DATE_EPOCH}"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            mapfile -d '' files < <(find . -mindepth 1 -print0 | LC_ALL=C sort -z)
+            7z a -tzip -mx=9 -mtc=off -mta=off -bd -y "${ZIP_PATH}.zip" "${files[@]}"
+          else
+            find . -print | LC_ALL=C sort | TC=UTC zip -X -q "${ZIP_PATH}.zip" -@
+          fi
+
+          # remove duplicate extension
+          mv "${ZIP_PATH}.zip" "$ZIP_PATH"
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+          sha=$(sha256sum --zero -- "$ZIP_PATH" | cut -d' ' -f1)
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ steps.zip.outputs.zip_path }}
+          if-no-files-found: error
+          retention-days: 14
+          archive: false
+
+
+  sign:  # separate from build job to avoid in-job signing, e.g. to minimize permissions during build
+    needs: build
+    if: ${{ !inputs.skip-sign && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+      artifact-metadata: write
+
+    outputs:
+      artifact-id: ${{ needs.build.outputs.unsigned-artifact-id }}
+      artifact-sha256: ${{ needs.build.outputs.unsigned-artifact-sha256 }}
+      attestation-url: ${{ steps.attest.outputs.attestation-url }}
+
+    steps:
+      - name: Require GitHub-hosted runner
+        if: runner.environment != 'github-hosted'
+        run: exit 1
+
+      - name: Download artifact
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build.outputs.unsigned-artifact-id }}
+          skip-decompress: true
+
+      - name: Extract DLL file
+        if: ${{ inputs.attestation-dll-path != '' }}
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        run: |
+          unzip -d . "$ARTIFACT_NAME"
+
+      - name: Verify SHA256 of downloaded artifact
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+          ARTIFACT_SHA256: ${{ needs.build.outputs.unsigned-artifact-sha256 }}
+        run: |
+          echo "$ARTIFACT_SHA256  $ARTIFACT_NAME" | sha256sum --check --status -
+
+      - name: Attest release artifact
+        id: attest
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ inputs.artifact-name }}
+            ${{ inputs.attestation-dll-path }}
+
+
+  deploy:
+    needs: sign
+    if: ${{ !inputs.skip-deploy && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: read
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.sign.outputs.artifact-id }}
+          skip-decompress: true
+
+      - name: Verify SHA256 of downloaded artifact
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+          ARTIFACT_SHA256: ${{ needs.sign.outputs.artifact-sha256 }}
+        run: |
+          echo "$ARTIFACT_SHA256  $ARTIFACT_NAME" | sha256sum --check --status -
+
+      - name: Verify provenance attestation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        run: |
+          gh attestation verify "$ARTIFACT_NAME" \
+              --deny-self-hosted-runners \
+              --repo "${{ github.repository }}" \
+              --source-digest "${{ github.sha }}" \
+              --signer-workflow "${{ job.workflow_ref }}" \
+              --signer-digest "${{ job.workflow_sha }}"
+
+      - name: Draft release
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v3.0.4
+        with:
+          prerelease: false
+          draft: true
+          files: ${{ inputs.artifact-name }}
+          body: |-
+            [Release attestation](${{ needs.sign.outputs.attestation-url }}).

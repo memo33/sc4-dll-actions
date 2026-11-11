@@ -10,7 +10,7 @@ runs:
   using: composite
   steps:
 
-   - name: Require Linux
+    - name: Require Linux
       if: runner.os != 'Linux'
       shell: bash
       run: |
@@ -23,7 +23,7 @@ runs:
       id: restore-xwin-headers
       with:
         path: ${{ inputs.path }}
-        key: xwin-headers-${{ runner.os }}-x86-manifest_17-${{ hashFiles(format('{0}/manifest_17.json', github.action_path)) }}
+        key: xwin-headers-${{ runner.os }}-x86-manifest_17-0  # NOTE bump the manifest version whenever the manifest is updated
 
     - name: Download xwin
       if: steps.restore-xwin-headers.outputs.cache-hit != 'true'
