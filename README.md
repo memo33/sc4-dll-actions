@@ -18,13 +18,14 @@ See the reusable workflow at [.github/workflows/attested-build.yaml](.github/wor
 Anybody can independently verify a downloaded ZIP or DLL with [gh attestation verify](https://cli.github.com/manual/gh_attestation_verify):
 
 ```sh
-gh attestation verify MyDll.zip --repo DLLOWNER/DLLREPOSITORY
+gh attestation verify FILENAME --repo DLLOWNER/DLLREPOSITORY --deny-self-hosted-runners --signer-repo memo33/sc4-dll-actions --signer-digest <sha>
 ```
 
 > [!Tip]
 > Alternatively, the attestations for a project can be viewed online under `https://github.com/DLLOWNER/DLLREPO/attestations`.
 
-A successful verification means the artifact was built with GitHub Actions using the workflow displayed by the command. This allows confirming that the DLL was built from the published source code.
+A successful verification means the artifact was built with GitHub Actions using the workflow displayed by the command.
+By inspecting the build steps in the workflow, this allows confirming that the DLL was built from the published source code.
 
 Note that it does not mean that using the DLL is secure, but only that it was built transparently from the source code, which can be reviewed openly.
 
@@ -57,9 +58,10 @@ jobs:
         cmake -S . -B build -A Win32
         cmake --build build --config Release
         mkdir build-output
-        cp build/Release/MyDll.dll MyDll.ini README.md LICENCSE.txt build-output
+        Copy-Item build\Release\MyDll.dll MyDll.ini README.md LICENCSE.txt -Destination build-output
       build-output: build-output
       artifact-name: MyDll-${{ github.ref_type == 'tag' && github.ref_name || github.sha }}.zip
+      attestation-subject-path: MyDll.dll
     permissions:
       id-token: write                # for attestation and deployment
       attestations: write            # for attestation
@@ -78,15 +80,16 @@ jobs:
   build:
     uses: memo33/sc4-dll-actions/.github/workflows/attested-build.yaml@<sha>
     with:
-      build-os: windows-latest
+      build-os: windows-2022
       compiler: MSVC
       install-msbuild: true
       build-script: |
         msbuild MyProject.sln /p:Configuration=Release /p:Platform=Win32
         mkdir build-output
-        cp MyProject/bin/Release/MyDll.dll MyDll.ini README.md LICENCSE.txt build-output
+        Copy-Item MyProject\bin\Release\MyDll.dll MyDll.ini README.md LICENCSE.txt -Destination build-output
       build-output: build-output
       artifact-name: MyDll-${{ github.ref_type == 'tag' && github.ref_name || github.sha }}.zip
+      attestation-subject-path: MyDll.dll
     permissions:
       id-token: write                # for attestation and deployment
       attestations: write            # for attestation
@@ -101,7 +104,7 @@ jobs:
   build:
     uses: memo33/sc4-dll-actions/.github/workflows/attested-build.yaml@<sha>
     with:
-      build-os: ubuntu-latest
+      build-os: ubuntu-26.04
       compiler: Clang
       xwin-path: vendor/xwin
       build-script: |
@@ -110,6 +113,7 @@ jobs:
         cp -p MyDll.{dll,ini} README.md 'Third Party Notices.txt' LICENSE.txt build-output
       build-output: build-output
       artifact-name: MyDll-${{ github.ref_type == 'tag' && github.ref_name || github.sha }}.zip
+      attestation-subject-path: MyDll.dll
     permissions:
       id-token: write                # for attestation and deployment
       attestations: write            # for attestation
@@ -124,15 +128,16 @@ jobs:
 | `build-script` | — | Command or inline script that builds the project. Runs in `bash` or `pwsh`, according to `build-shell` and the runner OS. |
 | `build-output` | — | Path to the file or directory to package. |
 | `artifact-name` | — | Name of the ZIP artifact and release file. It should end in `.zip`. |
-| `attestation-dll-path` | `*.dll` | Path or glob for the DLL inside the ZIP. Matching DLLs are added as attestation subjects in addition to the ZIP. Set it to an empty string to attest only the ZIP.<br>It should match only the intended DLL; it MUST NOT match any third-party binaries and SHOULD NOT match any text files, images, etc. |
+| `attestation-subject-path` | — | Path or glob for the DLL inside the ZIP, e.g. `*.dll`. Matching files are added as attestation subjects in addition to the ZIP. Set it to an empty string to attest only the ZIP.<br>It should match only the intended DLL; it MUST NOT match any third-party binaries and SHOULD NOT match any text files, images, etc. |
 | `compiler` | `Clang` | Compiler selection: `Clang` or `MSVC`. Clang is installed on Linux or Windows runners; MSVC requires a Windows runner. |
-| `build-os` | `ubuntu-latest` | Runner OS label for the build, such as `ubuntu-latest` or `windows-latest`. |
+| `build-os` | `ubuntu-26.04` | Runner OS label for the build, such as `ubuntu-26.04` or `windows-2022`. |
 | `install-msbuild` | `false` | Whether to install MSBuild. Intended for Windows builds. |
 | `install-cmake` | `false` | Whether to install CMake. |
 | `xwin-path` | Empty | Optional path for Windows SDK headers, passed to `setup-xwin` on Linux. An empty value skips xwin setup. |
 | `build-shell` | `pwsh` on Windows; else `bash` | Shell used to run `build-script`: `bash` or `pwsh`. |
-| `skip-sign` | `false` | When `true`, skips the sign job, e.g. on pre-releases. Set this for all tags without release. For example:<br>`${{ contains(github.ref_name, '-') }}`. |
+| `skip-sign` | `false` | When `true`, skips the sign job, e.g. on pre-releases. Set this for all tags without release. For example:<br>`${{ contains(github.ref_name, '-') }}` |
 | `skip-deploy` | `false` | When `true`, skips the deploy job; for example, if you want to handle deployment yourself. |
+| `prerelease` | `false` | When `true`, the release created on deployment is a *prerelease*. For example:<br>`${{ contains(github.ref_name, '-') }}` |
 
 Inputs marked with — are required.
 

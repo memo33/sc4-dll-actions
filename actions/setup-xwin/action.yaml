@@ -5,6 +5,9 @@ inputs:
   path:
     description: Directory in which xwin will install the MS CRT and Windows SDK headers, usually relative to the workspace
     required: true
+  allow-cache-restore:
+    description: 'true' or 'false', whether to allow using cached headers. If false, the action will always download and install the headers.
+    required: true
 
 runs:
   using: composite
@@ -17,9 +20,18 @@ runs:
         echo "::error::This action (setup-xwin) currently only supports Linux."
         exit 1
 
+    - name: Clear target path before restoring cache  # to avoid tainting the cache
+      shell: bash
+      working-directory: ${{ github.workspace }}  # since inputs.path may be relative to workspace
+      env:
+        TARGET_PATH: ${{ inputs.path }}
+      run: |
+        rm -rf "$TARGET_PATH"
+
       # The Windows SDK manifest file was downloaded with:
       # curl -L 'https://aka.ms/vs/17/release/channel' -o manifest_17.json
     - uses: actions/cache/restore@v6
+      if: ${{ inputs.allow-cache-restore == 'true' }}
       id: restore-xwin-headers
       with:
         path: ${{ inputs.path }}

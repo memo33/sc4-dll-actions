@@ -1,10 +1,9 @@
+# This workflow builds an SC4 DLL project, packages it into a .zip artifact for
+# release, and attests the artifact with a provenance attestation. The
+# attestation certifies which repository, commit and workflow run produced the
+# artifact. The attestation will include the .zip artifact itself, as well as
+# any files matching the `attestation-subject-path` input.
 name: attested-build
-description: |-
-  This workflow builds an SC4 DLL project, packages it into a .zip artifact for
-  release, and attests the artifact with a provenance attestation.
-  The attestation certifies that a DLL was built from the published sources.
-  The attestation will include the .zip artifact itself, as well as any DLLs
-  matching the `attestation-dll-path` input.
 
 on:
   workflow_call:
@@ -21,15 +20,14 @@ on:
         description: Artifact name used in the result and release, should end with .zip
         required: true
         type: string
-      attestation-dll-path:
+      attestation-subject-path:
         description:
-          Path or glob for the DLL inside the ZIP. Matching DLLs are added as attestation subjects in addition to the ZIP.
+          Path or glob for the DLL inside the ZIP, e.g. `*.dll`. Matching files are added as attestation subjects in addition to the ZIP.
           Set it to an empty string to attest only the ZIP.
           It should match only the intended DLL;
           it MUST NOT match any third-party binaries and SHOULD NOT match any text files, images, etc.
-        required: false
+        required: true
         type: string
-        default: '*.dll'
       compiler:
         description: Compiler selection; `Clang` or `MSVC`. Clang is installed on Linux or Windows runners; MSVC requires a Windows runner.
         required: false
@@ -39,7 +37,7 @@ on:
         description: Runner OS label for the build, such as `ubuntu-latest` or `windows-latest`.
         required: false
         type: string
-        default: ubuntu-latest
+        default: ubuntu-26.04
       install-msbuild:
         description: Whether to install MSBuild for the build. Intended for Windows builds.
         type: boolean
@@ -67,6 +65,11 @@ on:
         required: false
         type: boolean
         default: false
+      prerelease:
+        description: On deployment, whether the release created is a prerelease.
+        required: false
+        type: boolean
+        default: false
 
     outputs:
       artifact-id:
@@ -90,6 +93,10 @@ jobs:
       unsigned-artifact-sha256: ${{ steps.zip.outputs.sha256 }}
 
     steps:
+      - name: Require a standard GitHub-hosted runner
+        if: runner.environment != 'github-hosted' || !contains(fromJSON('["ubuntu-latest", "ubuntu-26.04", "windows-latest", "windows-2022", "windows-2025-vs2026", "windows-2025", "macos-latest"]'), inputs.build-os)
+        run: exit 1
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -146,6 +153,7 @@ jobs:
         uses: $/actions/setup-xwin
         with:
           path: ${{ inputs.xwin-path }}
+          allow-cache-restore: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
 
       - name: Build (bash)
         if: ${{ inputs.build-shell == '' && runner.os != 'Windows' || inputs.build-shell == 'bash' }}
@@ -165,8 +173,9 @@ jobs:
 
       - name: Fail if both were skipped
         if: ${{ steps.build-bash.conclusion == 'skipped' && steps.build-pwsh.conclusion == 'skipped' }}
+        shell: bash
         run: |
-          echo "Unsupported build-shell" >&2
+          echo "::error::Unsupported build-shell" >&2
           exit 1
 
       - name: Assemble dist tree
@@ -186,6 +195,9 @@ jobs:
             cp -pr -- "$BUILD_OUTPUT" "$DIST_ROOT"
           elif [[ -d "$BUILD_OUTPUT" ]]; then
             cp -pr -- "$BUILD_OUTPUT"/. "$DIST_ROOT"
+          else
+            echo "::error::Build output '$BUILD_OUTPUT' does not exist" >&2
+            exit 1
           fi
           echo "dist_root=$DIST_ROOT" >> "$GITHUB_OUTPUT"
 
@@ -220,7 +232,7 @@ jobs:
             mapfile -d '' files < <(find . -mindepth 1 -print0 | LC_ALL=C sort -z)
             7z a -tzip -mx=9 -mtc=off -mta=off -bd -y "${ZIP_PATH}.zip" "${files[@]}"
           else
-            find . -print | LC_ALL=C sort | TC=UTC zip -X -q "${ZIP_PATH}.zip" -@
+            find . -print | LC_ALL=C sort | TZ=UTC zip -X -q "${ZIP_PATH}.zip" -@
           fi
 
           # remove duplicate extension
@@ -242,8 +254,8 @@ jobs:
 
   sign:  # separate from build job to avoid in-job signing, e.g. to minimize permissions during build
     needs: build
-    if: ${{ !inputs.skip-sign && startsWith(github.ref, 'refs/tags/') }}
-    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip-sign && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-26.04
     permissions:
       id-token: write
       contents: read
@@ -267,7 +279,7 @@ jobs:
           skip-decompress: true
 
       - name: Extract DLL file
-        if: ${{ inputs.attestation-dll-path != '' }}
+        if: ${{ inputs.attestation-subject-path != '' }}
         shell: bash
         env:
           ARTIFACT_NAME: ${{ inputs.artifact-name }}
@@ -288,13 +300,13 @@ jobs:
         with:
           subject-path: |
             ${{ inputs.artifact-name }}
-            ${{ inputs.attestation-dll-path }}
+            ${{ inputs.attestation-subject-path }}
 
 
   deploy:
     needs: sign
-    if: ${{ !inputs.skip-deploy && startsWith(github.ref, 'refs/tags/') }}
-    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip-deploy && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       id-token: write
@@ -331,7 +343,7 @@ jobs:
       - name: Draft release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v3.0.4
         with:
-          prerelease: false
+          prerelease: ${{ inputs.prerelease }}
           draft: true
           files: ${{ inputs.artifact-name }}
           body: |-
