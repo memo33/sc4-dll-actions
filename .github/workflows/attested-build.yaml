@@ -28,11 +28,6 @@ on:
           it MUST NOT match any third-party binaries and SHOULD NOT match any text files, images, etc.
         required: true
         type: string
-      compiler:
-        description: Compiler selection; `Clang` or `MSVC`. Clang is installed on Linux or Windows runners; MSVC requires a Windows runner.
-        required: false
-        type: string
-        default: Clang
       build-os:
         description: Runner OS label for the build, such as `ubuntu-latest` or `windows-latest`.
         required: false
@@ -107,34 +102,6 @@ jobs:
         shell: bash
         run: |
           echo "source_date_epoch=$(git show -s --format=%ct)" >> "$GITHUB_OUTPUT"
-
-      - name: Install compiler
-        shell: bash
-        env:
-          COMPILER: ${{ inputs.compiler }}
-        run: |
-          if [ "$COMPILER" = "Clang" ]; then
-            if [ "${{ runner.os }}" = "Linux" ]; then
-              sudo apt-get update
-              sudo apt-get install -y --no-install-recommends clang lld
-            elif [ "${{ runner.os }}" = "Windows" ]; then
-              choco install llvm -y --no-progress
-              echo "C:/Program Files/LLVM/bin" >> "$GITHUB_PATH"
-            else
-              echo "Clang is not supported on ${{ runner.os }}" >&2
-              exit 1
-            fi
-            clang-cl --version
-            lld-link --version
-          elif [ "$COMPILER" = "MSVC" ]; then
-            if [ "${{ runner.os }}" != "Windows" ]; then
-              echo "MSVC requires a Windows runner" >&2
-              exit 1
-            fi
-          else
-            echo "Unsupported compiler: ${{ inputs.compiler }}" >&2
-            exit 1
-          fi
 
       - name: Setup MSBuild
         if: ${{ inputs.install-msbuild }}

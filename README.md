@@ -52,7 +52,6 @@ jobs:
     uses: memo33/sc4-dll-actions/.github/workflows/attested-build.yaml@<sha>
     with:
       build-os: windows-2022
-      compiler: MSVC
       install-cmake: true
       build-script: |
         cmake -S . -B build -A Win32
@@ -81,7 +80,6 @@ jobs:
     uses: memo33/sc4-dll-actions/.github/workflows/attested-build.yaml@<sha>
     with:
       build-os: windows-2022
-      compiler: MSVC
       install-msbuild: true
       build-script: |
         msbuild MyProject.sln /p:Configuration=Release /p:Platform=Win32
@@ -105,10 +103,9 @@ jobs:
     uses: memo33/sc4-dll-actions/.github/workflows/attested-build.yaml@<sha>
     with:
       build-os: ubuntu-26.04
-      compiler: Clang
       xwin-path: vendor/xwin
       build-script: |
-        make
+        make CLANG=clang-cl-22
         mkdir build-output
         cp -p MyDll.{dll,ini} README.md 'Third Party Notices.txt' LICENSE.txt build-output
       build-output: build-output
@@ -121,6 +118,13 @@ jobs:
       contents: write                # for deploying a release
 ```
 
+Clang comes preinstalled on Linux and Windows runners.
+On Linux, `clang-cl` is not available on the PATH though as there are multiple versions, so explicitly select a specific major version such as `clang-cl-22`.
+For available LLVM/Clang versions, check the runner documentation, e.g.
+[ubuntu-26.04](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md),
+[windows-2022](https://github.com/actions/runner-images/blob/main/images/windows/Windows2022-Readme.md).
+The specific runner image version and included software versions are logged at the top of each job in every workflow run.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -129,7 +133,6 @@ jobs:
 | `build-output` | — | Path to the file or directory to package. |
 | `artifact-name` | — | Name of the ZIP artifact and release file. It should end in `.zip`. |
 | `attestation-subject-path` | — | Path or glob for the DLL inside the ZIP, e.g. `*.dll`. Matching files are added as attestation subjects in addition to the ZIP. Set it to an empty string to attest only the ZIP.<br>It should match only the intended DLL; it MUST NOT match any third-party binaries and SHOULD NOT match any text files, images, etc. |
-| `compiler` | `Clang` | Compiler selection: `Clang` or `MSVC`. Clang is installed on Linux or Windows runners; MSVC requires a Windows runner. |
 | `build-os` | `ubuntu-26.04` | Runner OS label for the build, such as `ubuntu-26.04` or `windows-2022`. |
 | `install-msbuild` | `false` | Whether to install MSBuild. Intended for Windows builds. |
 | `install-cmake` | `false` | Whether to install CMake. |
