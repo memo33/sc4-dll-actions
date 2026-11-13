@@ -242,31 +242,34 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v8
         with:
+          path: ${{ runner.temp }}
           artifact-ids: ${{ needs.build.outputs.unsigned-artifact-id }}
           skip-decompress: true
 
-      - name: Extract DLL file
-        if: ${{ inputs.attestation-subject-path != '' }}
-        shell: bash
-        env:
-          ARTIFACT_NAME: ${{ inputs.artifact-name }}
-        run: |
-          unzip -d . "$ARTIFACT_NAME"
-
       - name: Verify SHA256 of downloaded artifact
         shell: bash
+        working-directory: ${{ runner.temp }}
         env:
           ARTIFACT_NAME: ${{ inputs.artifact-name }}
           ARTIFACT_SHA256: ${{ needs.build.outputs.unsigned-artifact-sha256 }}
         run: |
           echo "$ARTIFACT_SHA256  $ARTIFACT_NAME" | sha256sum --check --status -
 
+      - name: Extract subjects
+        if: ${{ inputs.attestation-subject-path != '' }}
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        # we exclude potential entries of the same name from extraction to avoid signing two different zips that have the same name
+        run: |
+          unzip "$RUNNER_TEMP/$ARTIFACT_NAME" -x "$ARTIFACT_NAME" -d .
+
       - name: Attest release artifact
         id: attest
         uses: actions/attest@v4
         with:
           subject-path: |
-            ${{ inputs.artifact-name }}
+            ${{ runner.temp }}/${{ inputs.artifact-name }}
             ${{ inputs.attestation-subject-path }}
 
 
