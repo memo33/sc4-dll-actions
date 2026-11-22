@@ -135,7 +135,7 @@ The specific runner image version and included software versions are logged at t
 | `attestation-subject-path` | — | Path or glob for the DLL inside the ZIP, e.g. `*.dll`. Matching files are added as attestation subjects in addition to the ZIP. Set it to an empty string to attest only the ZIP.<br>It should match only the intended DLL; it MUST NOT match any third-party binaries and SHOULD NOT match any text files, images, etc. |
 | `build-os` | `ubuntu-26.04` | Runner OS label for the build, such as `ubuntu-26.04` or `windows-2022`. |
 | `install-msbuild` | `false` | Whether to install MSBuild. Intended for Windows builds. |
-| `install-cmake` | `false` | Whether to install CMake. |
+| `install-cmake` | `false` | Whether to install a more recent CMake than the one pre-installed on the runner. |
 | `xwin-path` | Empty | Optional path for Windows SDK headers, passed to `setup-xwin` on Linux. An empty value skips xwin setup. |
 | `build-shell` | `pwsh` on Windows; else `bash` | Shell used to run `build-script`: `bash` or `pwsh`. |
 | `skip-sign` | `false` | When `true`, skips the sign job, e.g. on pre-releases. Set this for all tags without release. For example:<br>`${{ contains(github.ref_name, '-') }}` |

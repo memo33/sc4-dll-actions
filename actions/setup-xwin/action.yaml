@@ -6,7 +6,8 @@ inputs:
     description: Directory in which xwin will install the MS CRT and Windows SDK headers, usually relative to the workspace
     required: true
   allow-cache-restore:
-    description: 'true' or 'false', whether to allow using cached headers. If false, the action will always download and install the headers.
+    description: >-
+      'true' or 'false', whether to allow using cached headers. If false, the action will always download and install the headers.
     required: true
 
 runs:
@@ -30,7 +31,7 @@ runs:
 
       # The Windows SDK manifest file was downloaded with:
       # curl -L 'https://aka.ms/vs/17/release/channel' -o manifest_17.json
-    - uses: actions/cache/restore@v6
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       if: ${{ inputs.allow-cache-restore == 'true' }}
       id: restore-xwin-headers
       with:
@@ -66,7 +67,7 @@ runs:
           --manifest "$GITHUB_ACTION_PATH/manifest_17.json" \
           splat --output "$TARGET_PATH"
 
-    - uses: actions/cache/save@v6
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       if: steps.restore-xwin-headers.outputs.cache-hit != 'true'
       with:
         path: ${{ inputs.path }}
