@@ -47,6 +47,10 @@ on:
         required: false
         type: string
         default: ""
+      install-dbpf-cli:
+        description: Whether to install [DBPF CLI tools](https://github.com/memo33/dbpf-grep) for creating or manipulating dat files.
+        type: boolean
+        default: false
       build-shell:
         description: Shell used to run build-script (bash, pwsh). Defaults to `pwsh` on Windows, and `bash` otherwise.
         required: false
@@ -116,6 +120,12 @@ jobs:
         with:
           cmakeVersion: "4.4.5"
           useCloudCache: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
+
+      - name: Setup DBPF CLI
+        if: ${{ inputs.install-dbpf-cli }}
+        uses: $/actions/setup-dbpf-cli
+        with:
+          allow-cache-restore: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
 
       - name: Setup xwin headers
         if: ${{ inputs.xwin-path != '' }}
