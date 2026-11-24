@@ -1,0 +1,87 @@
+name: setup-dbpf-cli
+description: Install some DBPF CLI tools for creating or manipulating dat files, see https://github.com/memo33/dbpf-grep
+
+inputs:
+  allow-cache-restore:
+    description: >-
+      'true' or 'false', whether to allow using the cache. If false, the action will always download and install the tools.
+    required: false
+    default: true
+
+runs:
+  using: composite
+  steps:
+
+    - name: Identify artifact metadata
+      id: identify
+      shell: bash
+      run: |
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Windows-X64)
+            PLATFORM="windows-x64"
+            SHA256="69005ba844063352a82e72d146859be51f2efb54e54329e9afcbd814459c2ee9"
+            ;;
+          macOS-ARM64)
+            PLATFORM="macos-aarch64"
+            SHA256="22f1931920673a557e1c63609923abdd4c895cf94a8c7148994a3068c6bd4d9e"
+            ;;
+          Linux-X64)
+            PLATFORM="linux-x64"
+            SHA256="eadd437199723c57263f574ecc6ff0acbafba700c8bb427c0c32eee3ab28979e"
+            ;;
+          *)
+            echo "::error::Unsupported runner: ${RUNNER_OS}-${RUNNER_ARCH}" >&2
+            exit 1
+            ;;
+        esac
+        echo "platform=$PLATFORM" >> "$GITHUB_OUTPUT"
+        echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+        VERSION="0.2.1"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "url=https://github.com/memo33/dbpf-grep/releases/download/${VERSION}/dbpf-cli-${PLATFORM}.zip" >> "$GITHUB_OUTPUT"
+        echo "asset-name=dbpf-cli-${PLATFORM}.zip" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      if: ${{ inputs.allow-cache-restore == 'true' }}
+      id: restore
+      with:
+        path: ${{ github.action_path }}/${{ steps.identify.outputs.asset-name }}
+        key: dbpf-cli-zip-${{ runner.os }}-${{ steps.identify.outputs.version }}-${{ steps.identify.outputs.platform }}
+
+    - name: Download dbpf-cli
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        curl --silent -L \
+          --retry 4 \
+          --retry-max-time 60 \
+          --output "$ASSET_NAME" \
+          "$URL"
+      env:
+        URL: ${{ steps.identify.outputs.url }}
+        ASSET_NAME: ${{ steps.identify.outputs.asset-name }}
+
+    - name: Verify SHA-256
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        echo "$SHA256  $ASSET_NAME" | sha256sum --check --status -
+      env:
+        SHA256: ${{ steps.identify.outputs.sha256 }}
+        ASSET_NAME: ${{ steps.identify.outputs.asset-name }}
+
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      if: steps.restore.outputs.cache-hit != 'true'
+      with:
+        path: ${{ github.action_path }}/${{ steps.identify.outputs.asset-name }}
+        key: ${{ steps.restore.outputs.cache-primary-key }}
+
+    - name: Install dbpf-cli tools
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        unzip -q -d dbpf-cli "$ASSET_NAME"
+        echo "$GITHUB_ACTION_PATH/dbpf-cli/bin" >> "$GITHUB_PATH"
+      env:
+        ASSET_NAME: ${{ steps.identify.outputs.asset-name }}

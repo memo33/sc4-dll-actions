@@ -137,6 +137,7 @@ The specific runner image version and included software versions are logged at t
 | `install-msbuild` | `false` | Whether to install MSBuild. Intended for Windows builds. |
 | `install-cmake` | `false` | Whether to install a more recent CMake than the one pre-installed on the runner. |
 | `xwin-path` | Empty | Optional path for Windows SDK headers, passed to `setup-xwin` on Linux. An empty value skips xwin setup. |
+| `install-dbpf-cli` | `false` | Whether to install [DBPF CLI tools](https://github.com/memo33/dbpf-grep) for creating or manipulating dat files. |
 | `build-shell` | `pwsh` on Windows; else `bash` | Shell used to run `build-script`: `bash` or `pwsh`. |
 | `skip-sign` | `false` | When `true`, skips the sign job, e.g. on pre-releases. Set this for all tags without release. For example:<br>`${{ contains(github.ref_name, '-') }}` |
 | `skip-deploy` | `false` | When `true`, skips the deploy job; for example, if you want to handle deployment yourself. |
